@@ -1,4 +1,5 @@
 from django.http import HttpResponse
+from django.db.models import Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
@@ -71,6 +72,10 @@ class ApplicationListView(generics.ListCreateAPIView):
         p = actor(self.request)
         if p.has_permission("leave_elm.workflow.review"):
             return LeaveApplication.objects.all().order_by("-created_at")
+        if p.has_permission("leave_elm.workflow.substitute"):
+            return LeaveApplication.objects.filter(
+                Q(user_id=p.user_id) | Q(substitute_user_id=p.user_id)
+            ).order_by("-created_at")
         return LeaveApplication.objects.filter(user_id=p.user_id).order_by("-created_at")
 
     def create(self, request, *args, **kwargs):

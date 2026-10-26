@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -79,19 +79,27 @@ def validate_application(
 ):
     if category not in CATEGORIES:
         raise LeaveRuleError("Unsupported leave category.")
+    if start_date > end_date:
+        raise LeaveRuleError("Leave end date must not precede its start date.")
     if category == "VL" and getattr(actor, "kind", "") != "faculty":
         raise LeaveRuleError("VL is available only to faculty employees.")
     if category == "EL" and getattr(actor, "kind", "") == "faculty":
         raise LeaveRuleError("EL is available only to non-faculty employees in this baseline.")
     if category == "CL" and half not in ("", "first", "second"):
         raise LeaveRuleError("CL half must be first or second.")
+    if category != "CL" and half:
+        raise LeaveRuleError("Half-day leave is only available for CL.")
     calendar = _calendar(start_date.year)
     holidays = {date.fromisoformat(h["date"]) for h in (calendar.holidays if calendar else [])}
-    if category == "RH" and not any(
-        h.get("date") == start_date.isoformat() and h.get("kind") == "RH"
-        for h in (calendar.holidays if calendar else [])
-    ):
-        raise LeaveRuleError("RH must use an applicable date in the published RH calendar.")
+    if category == "RH":
+        valid_rh_dates = {
+            date.fromisoformat(h["date"]) for h in (calendar.holidays if calendar else []) if h.get("kind") == "RH"
+        }
+        requested_dates = [start_date + timedelta(days=offset) for offset in range((end_date - start_date).days + 1)]
+        if any(day not in valid_rh_dates for day in requested_dates):
+            raise LeaveRuleError("RH must use an applicable date in the published RH calendar.")
+        if start_date != end_date:
+            raise LeaveRuleError("RH requests must be limited to a single restricted holiday date.")
     if category == "VL":
         policy = _policy(start_date.year)
         vacations = policy.values.get("vacation_periods", []) if policy else []
@@ -290,6 +298,8 @@ def extension(*, actor, app, start_date, end_date, purpose, substitute_user_id=N
         chargeable_days=days,
         substitute_required=bool(substitute_user_id),
         substitute_user_id=substitute_user_id,
+        unit_head_user_id=app.unit_head_user_id,
+        final_authority_user_id=app.final_authority_user_id,
         state="awaiting_substitute" if substitute_user_id else "unit_head_review",
         route=app.route,
     )
